@@ -13,6 +13,7 @@ from torch import nn
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
+from dynamic_network_architectures.building_blocks.abc_net import ASPP
 
 class PlainConvUNet(nn.Module):
     def __init__(self,
@@ -111,10 +112,16 @@ class ResidualEncoderUNet(nn.Module):
                                        n_blocks_per_stage, conv_bias, norm_op, norm_op_kwargs, dropout_op,
                                        dropout_op_kwargs, nonlin, nonlin_kwargs, block, bottleneck_channels,
                                        return_skips=True, disable_default_stem=False, stem_channels=stem_channels)
+        # ASPP 模块
+        self.aspp = ASPP(in_channels=features_per_stage[-1], out_channels=features_per_stage[-1])
+
+
         self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision)
 
     def forward(self, x):
         skips = self.encoder(x)
+        # 最高级特征通过 ASPP
+        skips[-1] = self.aspp(skips[-1])
         return self.decoder(skips)
 
     def compute_conv_feature_map_size(self, input_size):
