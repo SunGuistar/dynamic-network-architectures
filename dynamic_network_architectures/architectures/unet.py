@@ -14,6 +14,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
 from dynamic_network_architectures.building_blocks.abc_net import ASPP
+from dynamic_network_architectures.building_blocks.abc_net_decoder import ABCNetDecoder
 
 class PlainConvUNet(nn.Module):
     def __init__(self,
@@ -115,8 +116,8 @@ class ResidualEncoderUNet(nn.Module):
         # ASPP 模块
         self.aspp = ASPP(in_channels=features_per_stage[-1], out_channels=features_per_stage[-1])
 
-
-        self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision)
+        # 解码器：跳跃连接改为LGAG
+        self.decoder = ABCNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision)
 
     def forward(self, x):
         skips = self.encoder(x)
