@@ -6,6 +6,17 @@ import math
 from timm.layers import trunc_normal_tf_
 from timm.models import named_apply
 
+def channel_shuffle(x, groups):
+    batchsize, num_channels, height, width = x.data.size()
+    channels_per_group = num_channels // groups
+    # reshape
+    x = x.view(batchsize, groups,
+               channels_per_group, height, width)
+    x = torch.transpose(x, 1, 2).contiguous()
+    # flatten
+    x = x.view(batchsize, -1, height, width)
+    return x
+
 def _init_weights(module, name, scheme=''):
     if isinstance(module, nn.Conv2d) or isinstance(module, nn.Conv3d):
         if scheme == 'normal':
@@ -93,3 +104,30 @@ class LGAG_Modified(nn.Module):
         x_att = x * psi  # 对跳跃连接特征进行注意力加权
         return torch.cat((g, x_att), 1)  # 保持与 UNetResDecoder 相同的通道数
 
+# 上采样模块
+class EUCB(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, activation='relu'):
+        super(EUCB, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        # 先进行2倍上采样
+        self.up_dwc = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # 保持与转置卷积的上采样一致
+            nn.Conv2d(self.in_channels, self.in_channels, kernel_size=kernel_size, stride=stride,
+                      padding=kernel_size // 2, groups=self.in_channels, bias=False),  # 深度可分离卷积
+            nn.BatchNorm2d(self.in_channels),
+            act_layer(activation, inplace=True)
+        )
+
+        # 1x1 Pointwise Convolution，调整到目标通道数
+        self.pwc = nn.Sequential(
+            nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1, stride=1, padding=0, bias=True)
+        )
+
+    def forward(self, x):
+        x = self.up_dwc(x)  # 上采样 + 深度可分离卷积
+        x = channel_shuffle(x, self.in_channels)  # 进行通道混合（可选）
+        x = self.pwc(x)  # 1x1 卷积调整通道数
+        return x

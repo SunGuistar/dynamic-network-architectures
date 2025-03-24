@@ -9,7 +9,7 @@ from dynamic_network_architectures.building_blocks.simple_conv_blocks import Sta
 from dynamic_network_architectures.building_blocks.helper import get_matching_convtransp
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
-from dynamic_network_architectures.building_blocks.EMCAD_net import LGAG_Modified
+from dynamic_network_architectures.building_blocks.EMCAD_net import LGAG_Modified, EUCB
 
 class ABCNetDecoder(nn.Module):
     def __init__(self,
@@ -64,7 +64,7 @@ class ABCNetDecoder(nn.Module):
 
         # we start with the bottleneck and work out way up
         stages = []
-        transpconvs = []
+        upsampling_blocks = [] # 用 EUCB
         seg_layers = []
         lgag_modules = []  # 添加 LGAG_Modified 层
 
@@ -72,15 +72,12 @@ class ABCNetDecoder(nn.Module):
             input_features_below = encoder.output_channels[-s]
             input_features_skip = encoder.output_channels[-(s + 1)]
             stride_for_transpconv = encoder.strides[-s]
-            transpconvs.append(transpconv_op(
-                input_features_below, input_features_skip, stride_for_transpconv, stride_for_transpconv,
-                bias=conv_bias
-            ))
+
+            # 替换转置卷积为 EUCB
+            upsampling_blocks.append(EUCB(input_features_below, input_features_skip))
 
             # 预定义 LGAG_Modified 层
             lgag_modules.append(LGAG_Modified(input_features_skip, input_features_skip, input_features_skip // 2))
-            print('------------------------------------f"Stage-------------------------------------------')
-            print(f"Stage {s}: input_features_below={input_features_below}, input_features_skip={input_features_skip}")
 
             # input features to conv is 2x input_features_skip (concat input_features_skip with transpconv output)
             stages.append(StackedConvBlocks(
@@ -102,7 +99,7 @@ class ABCNetDecoder(nn.Module):
             seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
 
         self.stages = nn.ModuleList(stages)
-        self.transpconvs = nn.ModuleList(transpconvs)
+        self.upsampling_blocks = nn.ModuleList(upsampling_blocks)  # 用 EUCB 替换转置卷积
         self.seg_layers = nn.ModuleList(seg_layers)
         self.lgag_modules = nn.ModuleList(lgag_modules)  # 添加到 `nn.ModuleList`
 
@@ -116,7 +113,7 @@ class ABCNetDecoder(nn.Module):
         lres_input = skips[-1]
         seg_outputs = []
         for s in range(len(self.stages)):
-            x = self.transpconvs[s](lres_input)
+            x = self.upsampling_blocks[s](lres_input) # 上采样
             x = self.lgag_modules[s](x, skips[-(s + 2)])  # 直接使用预定义的 LGAG_Modified
             x = self.stages[s](x)
             if self.deep_supervision:
