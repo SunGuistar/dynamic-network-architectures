@@ -9,7 +9,7 @@ from dynamic_network_architectures.building_blocks.simple_conv_blocks import Sta
 from dynamic_network_architectures.building_blocks.helper import get_matching_convtransp
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
-from dynamic_network_architectures.building_blocks.EMCAD_net import LGAG_Modified, EUCB
+from dynamic_network_architectures.building_blocks.EMCAD_net import LGAG_Modified, EUCB, SAB, CAB
 
 class ABCNetDecoder(nn.Module):
     def __init__(self,
@@ -67,6 +67,8 @@ class ABCNetDecoder(nn.Module):
         upsampling_blocks = [] # 用 EUCB
         seg_layers = []
         lgag_modules = []  # 添加 LGAG_Modified 层
+        cab_modules = []  # 添加 CAB 模块
+        sab_modules = []  # 添加 SAB 模块
 
         for s in range(1, n_stages_encoder):
             input_features_below = encoder.output_channels[-s]
@@ -78,6 +80,10 @@ class ABCNetDecoder(nn.Module):
 
             # 预定义 LGAG_Modified 层
             lgag_modules.append(LGAG_Modified(input_features_skip, input_features_skip, input_features_skip // 2))
+
+            # 定义 CAB 和 SAB 模块
+            cab_modules.append(CAB(activation='relu'))
+            sab_modules.append(SAB(kernel_size=7))
 
             # input features to conv is 2x input_features_skip (concat input_features_skip with transpconv output)
             stages.append(StackedConvBlocks(
@@ -102,6 +108,8 @@ class ABCNetDecoder(nn.Module):
         self.upsampling_blocks = nn.ModuleList(upsampling_blocks)  # 用 EUCB 替换转置卷积
         self.seg_layers = nn.ModuleList(seg_layers)
         self.lgag_modules = nn.ModuleList(lgag_modules)  # 添加到 `nn.ModuleList`
+        self.cab_modules = nn.ModuleList(cab_modules)  # 添加到 `nn.ModuleList`
+        self.sab_modules = nn.ModuleList(sab_modules)  # 添加到 `nn.ModuleList`
 
     def forward(self, skips):
 
@@ -114,6 +122,12 @@ class ABCNetDecoder(nn.Module):
         seg_outputs = []
         for s in range(len(self.stages)):
             x = self.upsampling_blocks[s](lres_input) # 上采样
+            # 插入 CAB 模块
+            cab = CAB().to(x.device)
+            x = x * cab(x)
+            # 插入 SAB 模块
+            sab = SAB().to(x.device)
+            x = x * sab(x)
             x = self.lgag_modules[s](x, skips[-(s + 2)])  # 直接使用预定义的 LGAG_Modified
             x = self.stages[s](x)
             if self.deep_supervision:
